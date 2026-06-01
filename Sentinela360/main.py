@@ -6,33 +6,56 @@ import json
 import supervision as sv
 from ultralytics import YOLO
 
-def cargar_zona(width, height):
-    """Carga el polígono guardado o usa pantalla completa por defecto."""
-    if os.path.exists("zona_config.json"):
-        with open("zona_config.json", "r") as f:
-            return np.array(json.load(f))
-    return np.array([[10, 10], [width - 10, 10], [width - 10, height - 10], [10, height - 10]])
+# REGLAS DE NEGOCIO DEL MODELO ESTABLE
+PESOS_RIESGO = {
+    "casco": 35,
+    "chaleco": 35,
+    "lentes": 10,
+    "guantes": 10,
+    "botas": 10
+}
+
+def cargar_zona(id_camara, width, height):
+    """Carga el polígono buscando el nombre oficial de la calibración."""
+    archivo = f"zona_cam_{id_camara}.json"
+    try:
+        if os.path.exists(archivo):
+            with open(archivo, "r") as f:
+                return np.array(json.load(f))
+        elif os.path.exists("zona_config.json"):
+            with open("zona_config.json", "r") as f:
+                return np.array(json.load(f))
+    except Exception:
+        pass
+    return np.array([[5, 5], [width - 5, 5], [width - 5, height - 5], [5, height - 5]])
+
+def hay_interseccion(box_persona, box_equipo):
+    """Geometría robusta de superposición para no depender del centro exacto."""
+    xA = max(box_persona[0], box_equipo[0])
+    yA = max(box_persona[1], box_equipo[1])
+    xB = min(box_persona[2], box_equipo[2])
+    yB = min(box_persona[3], box_equipo[3])
+    return max(0, xB - xA) * max(0, yB - yA) > 0
 
 def main():
-    print("[SENTINELA 360] -> Inicializando Inteligencia Artificial...")
+    print("[SENTINELA 360] -> Inicializando IA con Modelo Estable...")
     model = YOLO("best.pt") 
 
-    # 1 = Cámara Inalámbrica (Tu Xiaomi) | 0 = Webcam HP
-    video_path = 1  
+    video_path = 0  # 0 = Cámara Laptop Principal
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
         print(f"❌ Error CRÍTICO: No se conectó la cámara {video_path}.")
         return
 
-    # Solicitar resolución HD
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    polygon = cargar_zona(width, height)
-    zone = sv.PolygonZone(polygon=polygon)
+    polygon = cargar_zona(video_path, width, height)
+    # PARCHE: triggering_anchors al centro para que detecte el cuerpo cortado por la cámara
+    zone = sv.PolygonZone(polygon=polygon, triggering_anchors=[sv.Position.CENTER])
     
     box_annotator = sv.BoxAnnotator()
     label_annotator = sv.LabelAnnotator()
@@ -42,7 +65,6 @@ def main():
     FRAMES_REQUERIDOS = 60  
     alert_cooldown = False  
 
-    # Sistema de Auditoría
     if not os.path.exists("Alertas"): 
         os.makedirs("Alertas")
     
@@ -51,7 +73,6 @@ def main():
         with open(archivo_log, "w") as log:
             log.write("Fecha,Hora,Evento,Archivo_Evidencia\n")
 
-    # 🛠️ FORZAR TAMAÑO DE VENTANA
     cv2.namedWindow("Sentinela 360 - Dashboard", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("Sentinela 360 - Dashboard", 1280, 720)
 
@@ -63,12 +84,14 @@ def main():
             cv2.waitKey(10)
             continue  
 
-        # Inferencia (conf=0.15 para no perder detalles por la transmisión WiFi)
         results = model(frame, device=0, conf=0.15)[0]
         detections = sv.Detections.from_ultralytics(results)
-        is_inside = zone.trigger(detections=detections)
+        
+        if len(detections) > 0:
+            is_inside = zone.trigger(detections=detections)
+        else:
+            is_inside = []
 
-        # Segmentación Espacial
         personas_boxes = []
         equipos_boxes = []
 
@@ -77,45 +100,66 @@ def main():
             
             nombre_clase = model.names[class_id].lower()
             if nombre_clase == "person":
-                personas_boxes.append(xyxy)
+                # Almacenamos diccionario para inyectar el riesgo luego
+                personas_boxes.append({"box": xyxy, "riesgo": 0})
             else:
                 equipos_boxes.append((nombre_clase, xyxy))
 
         infracciones_actuales = 0
 
-        # Auditoría Individual Geométrica
-        for p_box in personas_boxes:
-            px1, py1, px2, py2 = p_box
-            tiene_casco = False
-            tiene_chaleco = False
-            falta_explicita = False
+        # Lógica de cálculo original (Inglés) + Superposición
+        for p_info in personas_boxes:
+            px1, py1, px2, py2 = p_info["box"]
+            
+            epp_encontrado = {"helmet": False, "vest": False, "goggle": False, "gloves": False, "boots": False}
+            faltas_explicitas = {"no_helmet": False, "no_goggle": False, "no_gloves": False, "no_boots": False, "none": False}
 
             for equipo_nombre, e_box in equipos_boxes:
-                ex1, ey1, ex2, ey2 = e_box
-                centro_x, centro_y = (ex1 + ex2) / 2, (ey1 + ey2) / 2
+                if hay_interseccion(p_info["box"], e_box):
+                    if equipo_nombre in epp_encontrado:
+                        epp_encontrado[equipo_nombre] = True
+                    elif equipo_nombre in faltas_explicitas:
+                        faltas_explicitas[equipo_nombre] = True
 
-                if px1 <= centro_x <= px2 and py1 <= centro_y <= py2:
-                    if equipo_nombre == "helmet": tiene_casco = True
-                    elif equipo_nombre == "vest": tiene_chaleco = True
-                    elif equipo_nombre in ["no_helmet", "no_goggle", "no_gloves", "no_boots", "none"]:
-                        falta_explicita = True
+            riesgo_persona = 0
 
-            if falta_explicita or not tiene_casco or not tiene_chaleco:
+            if faltas_explicitas["none"]:
+                riesgo_persona = 100
+            else:
+                if faltas_explicitas["no_helmet"] or not epp_encontrado["helmet"]: riesgo_persona += PESOS_RIESGO["casco"]
+                if not epp_encontrado["vest"]: riesgo_persona += PESOS_RIESGO["chaleco"]
+                if faltas_explicitas["no_goggle"] or not epp_encontrado["goggle"]: riesgo_persona += PESOS_RIESGO["lentes"]
+                if faltas_explicitas["no_gloves"] or not epp_encontrado["gloves"]: riesgo_persona += PESOS_RIESGO["guantes"]
+                if faltas_explicitas["no_boots"] or not epp_encontrado["boots"]: riesgo_persona += PESOS_RIESGO["botas"]
+
+            riesgo_persona = min(riesgo_persona, 100)
+            p_info["riesgo"] = riesgo_persona
+
+            if riesgo_persona > 0:
                 infracciones_actuales += 1
 
-        # Filtro Temporal Antiruido
         if infracciones_actuales > 0:
             consecutive_infractions += 1
         else:
             if consecutive_infractions > 0: consecutive_infractions -= 1 
 
-        # Renderizado Visual de Anotaciones
         labels = [f"{model.names[class_id]} {conf:.2f}" for class_id, conf in zip(detections.class_id, detections.confidence)]
         frame = box_annotator.annotate(scene=frame, detections=detections)
         frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
         frame = zone_annotator.annotate(scene=frame)
 
-        # Interfaz de Usuario (HUD)
+        # Semáforo dinámico inyectado
+        for p_info in personas_boxes:
+            px1, py1, px2, py2 = map(int, p_info["box"])
+            riesgo = p_info["riesgo"]
+            
+            if riesgo == 0: color_caja = (0, 255, 0)
+            elif riesgo <= 35: color_caja = (0, 255, 255)
+            else: color_caja = (0, 0, 255)
+
+            cv2.rectangle(frame, (px1, py1), (px2, py2), color_caja, 4)
+            cv2.putText(frame, f"{riesgo}% Riesgo", (px1, py1 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color_caja, 3)
+
         progreso = min(100, int((consecutive_infractions / FRAMES_REQUERIDOS) * 100))
         
         if infracciones_actuales == 0:
@@ -126,9 +170,8 @@ def main():
             color_estado = (0, 0, 255) 
 
         cv2.putText(frame, estado_texto, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color_estado, 2)
-        cv2.putText(frame, f"Nivel de Riesgo: {progreso}%", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, f"Alerta Confirmando: {progreso}%", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        # Guardado de Evidencia y Registro
         if consecutive_infractions >= FRAMES_REQUERIDOS and not alert_cooldown:
             fecha_actual = time.strftime("%Y-%m-%d")
             hora_actual = time.strftime("%H:%M:%S")
@@ -146,7 +189,6 @@ def main():
         if consecutive_infractions == 0:
             alert_cooldown = False
 
-        # Mostrar interfaz
         cv2.imshow("Sentinela 360 - Dashboard", frame)
 
         if cv2.waitKey(1) & 0xFF in [27, ord('q'), ord('Q')]: 
