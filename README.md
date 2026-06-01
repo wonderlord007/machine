@@ -1,105 +1,101 @@
 # 🛡️ Sentinela 360
+
 **Sistema de Monitoreo de Seguridad Industrial (HSE) con Inteligencia Artificial**
 
-Sentinela 360 es un sistema de visión computacional de grado de producción diseñado para auditar en tiempo real el cumplimiento del Equipo de Protección Personal (EPP) en zonas de riesgo. Desarrollado como proyecto para la carrera de Ingeniería de Software con Inteligencia Artificial, este sistema utiliza una arquitectura YOLO para identificar trabajadores y verificar la portación de cascos, chalecos, guantes, botas y lentes.
+Sentinela 360 es un software de visión computacional de grado de producción diseñado para auditar en tiempo real el cumplimiento del Equipo de Protección Personal (EPP) en zonas de riesgo. Desarrollado como proyecto para la carrera de Ingeniería de Software con Inteligencia Artificial, este sistema utiliza una arquitectura YOLO integrada en una interfaz gráfica moderna para identificar trabajadores y verificar la portación de cascos, chalecos, guantes, botas y lentes.
 
 ---
 
 ## 🚀 Características Principales
-* **Arquitectura Dual-Cam (Split-Screen):** Monitoreo simultáneo en HD (1280x720) mediante una cámara CCTV/Webcam y una secundaria inalámbrica.
-* **Asociación Espacial Geométrica:** Algoritmo que calcula el centroide de cada equipo detectado para vincularlo matemáticamente a un trabajador específico, evitando falsos positivos.
-* **Filtro Temporal Antiruido:** Sistema de persistencia que requiere confirmación visual continua (por defecto, 60 fotogramas) antes de disparar una alerta.
-* **Trazabilidad:** Generación de bitácoras `.csv` y evidencia fotográfica con HUD renderizado.
+
+* **Interfaz Gráfica Unificada (GUI):** Aplicación de escritorio nativa en modo oscuro (construida con CustomTkinter) que elimina la necesidad de usar la consola. Incluye un *Launcher* para seleccionar el modo de operación.
+* **Escalabilidad de Monitoreo:** * *Modo Individual:* Monitoreo enfocado a pantalla completa mediante una cámara web principal.
+* *Modo Dual:* Monitoreo simultáneo en pantalla dividida mediante una cámara principal y una secundaria (ej. inalámbrica/RTSP).
+
+
+* **Calibración Geométrica Integrada:** Herramienta visual dentro de la app para delimitar áreas de peligro mediante 4 clics, adaptando automáticamente la resolución (Aspect Ratio) sin distorsionar la imagen.
+* **Asociación Espacial Avanzada:** Algoritmo de superposición (Overlap) anclado al centro de masa, que permite vincular equipos de protección al trabajador incluso si la cámara corta parte del cuerpo (planos medios).
+* **Filtro Temporal Antiruido:** Sistema de persistencia que requiere confirmación visual continua (60 fotogramas por defecto) antes de disparar una alerta, evitando falsos positivos.
+* **Trazabilidad de Evidencia:** Generación automática de bitácoras y evidencia fotográfica con HUD renderizado.
 
 ---
 
 ## 📊 Sobre el Dataset y el Modelo
-El cerebro de Sentinela 360 es un modelo YOLOv10 entrenado específicamente para entornos industriales. 
+
+El cerebro de Sentinela 360 es un modelo YOLO entrenado y optimizado específicamente para entornos industriales.
+
 * **Plataformas de entrenamiento:** Roboflow (etiquetado y preprocesamiento) y Google Colab (entrenamiento en GPU).
-* **Clases Detectadas (11 en total):** * *Elementos base:* `Person` (Persona), `helmet` (Casco), `vest` (Chaleco).
-  * *Faltas explícitas:* `no_helmet`, `no_vest`, `no_goggle`, `no_gloves`, `no_boots`, `none`.
-* **Peso del modelo:** El archivo `best.pt` contiene los pesos finales optimizados.
+* **Versión Estable (Inglés):** El sistema utiliza un modelo de alta confiabilidad con clases base como `Person` (Persona), `helmet` (Casco), `vest` (Chaleco), junto con detecciones de faltas explícitas (`no_helmet`, `no_goggle`, `none`, etc.).
+* **Peso del modelo:** El archivo `best.pt` contiene los pesos finales optimizados para inferencia en tiempo real.
 
 ---
 
 ## ⚙️ Instalación y Configuración
 
 ### 1. Clonar el Repositorio
+
 Para descargar el proyecto en tu máquina local, ejecuta en tu terminal:
+
 ```bash
-git clone [https://github.com/tu-usuario/Sentinela360.git](https://github.com/tu-usuario/Sentinela360.git)
+git clone https://github.com/tu-usuario/Sentinela360.git
 cd Sentinela360
 
 ```
 
 ### 2. Entorno Virtual y Dependencias
 
-Se recomienda utilizar un entorno virtual (venv o conda). El sistema requiere aceleración gráfica por hardware (NVIDIA CUDA) para procesar múltiples cámaras sin latencia.
+Se recomienda utilizar un entorno virtual (venv o conda). El sistema aprovecha la aceleración gráfica por hardware (NVIDIA CUDA) para procesar los flujos de video sin latencia.
 
 **Instalar PyTorch (Soporte GPU - CUDA 11.8):**
 
 ```bash
-pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu118](https://download.pytorch.org/whl/cu118)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 ```
 
-**Instalar dependencias de visión:**
+**Instalar dependencias de visión e Interfaz Gráfica:**
 
 ```bash
-pip install opencv-python numpy supervision ultralytics roboflow
+pip install opencv-python numpy supervision ultralytics roboflow customtkinter Pillow
 
 ```
 
 ---
 
-## 🛠️ Modificación y Personalización (Ajustes para Desarrolladores)
+## 🛠️ Ajustes para Desarrolladores (Fine-Tuning)
 
-Si deseas adaptar el código para otros entornos o modificar su sensibilidad, puedes alterar las siguientes variables directamente en `dashboard_dual.py`:
+Si deseas adaptar el código para otros entornos o modificar su sensibilidad, puedes alterar las siguientes variables directamente en `sentinela_app.py`:
 
 * **Modificar el tiempo de alerta (Filtro Antiruido):**
-Busca la variable `FRAMES_REQUERIDOS`. Por defecto está en `60` (equivale a 2 segundos a 30 FPS).
-* *Para una alerta más rápida (1 segundo):* Cambiar a `30`.
-* *Para una alerta más tolerante (5 segundos):* Cambiar a `150`.
+Busca la variable `FRAMES_REQUERIDOS`. Por defecto está en `60` (aprox. 2 segundos).
+* *Para alertas inmediatas:* Cambiar a `30`.
+* *Para mayor tolerancia:* Cambiar a `120`.
 
 
 * **Modificar la sensibilidad de la IA (Confidence):**
-Busca la línea de inferencia: `model(frame, device=0, conf=0.15)`.
-* Si la IA genera falsos positivos (detecta cosas que no son), sube el umbral a `conf=0.40`.
-* Si la IA ignora objetos lejanos, bájalo a `conf=0.10`.
+Busca la línea de inferencia: `model(frame, device=0, conf=0.45, verbose=False)`.
+* El valor `0.45` está optimizado para evitar falsos positivos con uniformes civiles. Si la IA ignora objetos lejanos, bájalo a `0.25`.
 
 
-* **Cambiar el origen de las cámaras:**
-Las variables `cap_laptop = cv2.VideoCapture(0)` y `cap_movil = cv2.VideoCapture(1)` definen los puertos. Modifica los índices (0, 1, 2) según tu configuración de hardware o puertos RTSP para cámaras IP.
 
 ---
 
-## 🚦 Guía de Uso Rápido
+## 🚦 Guía de Uso
 
-### 1. Calibración Topográfica (Mapping)
+Toda la operación se realiza ahora desde un único archivo maestro.
 
-Debe delimitar las "Zonas de Riesgo" para enseñar a la IA dónde mirar.
+### 1. Iniciar el Sistema
 
-```bash
-python herramienta_zonas.py
-
-```
-
-* Ingresa `0` para mapear la cámara principal y marca 4 puntos.
-* Ingresa `1` para mapear la cámara secundaria (ej. cámara inalámbrica Redmi 14C u otro móvil) y marca 4 puntos.
-
-### 2. Despliegue en Producción
-
-Una vez generados los archivos `zona_cam_0.json` y `zona_cam_1.json`, inicia el Centro de Comando:
+Ejecuta el siguiente comando en tu terminal para abrir el Launcher:
 
 ```bash
-python dashboard_dual.py
+python sentinela_app.py
 
 ```
 
-* **Cierre seguro:** Presiona la tecla `ESC` para detener la inferencia, purgar la VRAM y cerrar el sistema. Las evidencias se guardarán automáticamente en la carpeta `/Alertas`.
+### 2. Flujo de Operación
 
-```
-
-Con este README cubres exactamente lo que un repositorio bien hecho necesita: origen de los datos, instalación paso a paso, configuración de parámetros y uso del sistema. ¡Listo para impactar!
-
-```
+1. **Calibración:** En el menú principal, haz clic en **"⚙️ Calibrar Zona"** (Cam 0 o Cam 1). Haz 4 clics en la ventana de video para delimitar la zona de riesgo y presiona `ESC` para guardar. (Nota: La Cam 0 cuenta con efecto espejo nativo para facilitar la orientación).
+2. **Monitoreo:** Selecciona **"Iniciar Modo Individual"** o **"Iniciar Modo Dual"**.
+3. **Gestión:** El sistema detectará las infracciones automáticamente, mostrando el riesgo en pantalla y guardando capturas en la carpeta `/Alertas`.
+4. **Cierre Seguro:** Utiliza el botón rojo **"Finalizar Turno"** en la interfaz gráfica para liberar las cámaras y apagar los procesos correctamente.
