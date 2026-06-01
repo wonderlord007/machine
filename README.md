@@ -37,7 +37,7 @@ El cerebro de Sentinela 360 es un modelo YOLO entrenado y optimizado específica
 Para descargar el proyecto en tu máquina local, ejecuta en tu terminal:
 
 ```bash
-git clone https://github.com/tu-usuario/Sentinela360.git
+git clone https://github.com/wonderlord007/Sentinela360.git
 cd Sentinela360
 
 ```
