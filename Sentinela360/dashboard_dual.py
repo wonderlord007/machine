@@ -1,3 +1,11 @@
+"""Sentinela360 - dashboard_dual.py
+
+Funcionalidad: Modo de visualización y procesamiento dual (dos cámaras) del sistema.
+Por qué existe: Permitir monitoreo simultáneo de dos fuentes de video y confirmar alertas por persistencia temporal.
+Para qué sirve: Procesar frames de ambas cámaras, calcular riesgos por zona y guardar evidencia cuando se confirma una infracción.
+Cómo funciona: Inicializa dos capturas, aplica el modelo YOLO en cada frame, usa zonas definidas y mantiene contadores por cámara para confirmar alertas.
+"""
+
 import os
 import time
 import cv2
@@ -19,26 +27,37 @@ PESOS_RIESGO = {
 }
 
 def cargar_zona(id_camara):
+    # Bloque: carga de polígono de zona para la cámara
+    # - intenta `zona_cam_<id>.json`
+    # - si no existe, devuelve un polígono por defecto
     archivo = f"zona_cam_{id_camara}.json"
     try:
         if os.path.exists(archivo):
+            # Abrir y parsear JSON con lista de coordenadas [[x,y],...]
             with open(archivo, "r") as f:
                 return np.array(json.load(f))
     except Exception:
+        # En caso de fallo de lectura/parseo, continuar y usar fallback
         pass
+    # Fallback: polígono que deja un margen de 5 píxeles alrededor
     return np.array([[5, 5], [WIDTH - 5, 5], [WIDTH - 5, HEIGHT - 5], [5, HEIGHT - 5]])
 
 def hay_interseccion(box_persona, box_equipo):
-    xA = max(box_persona[0], box_equipo[0])
-    yA = max(box_persona[1], box_equipo[1])
-    xB = min(box_persona[2], box_equipo[2])
-    yB = min(box_persona[3], box_equipo[3])
+    # Calcula área de intersección entre dos cajas (formato xyxy)
+    xA = max(box_persona[0], box_equipo[0])  # x izquierda del solapamiento
+    yA = max(box_persona[1], box_equipo[1])  # y superior del solapamiento
+    xB = min(box_persona[2], box_equipo[2])  # x derecha del solapamiento
+    yB = min(box_persona[3], box_equipo[3])  # y inferior del solapamiento
+    # Si el ancho o alto del área de intersección es <=0 no hay solapamiento
     return max(0, xB - xA) * max(0, yB - yA) > 0
 
 def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_annotator, nombre_camara, estado):
-    results = model(frame, device=0, conf=0.15)[0]
+    # Inferencia: pasar frame al modelo YOLO
+    results = model(frame, device=0, conf=0.15)[0]  # ejecutar modelo
+    # Convertir salida de ultralytics a formato 'supervision' para anotadores
     detections = sv.Detections.from_ultralytics(results)
     
+    # Determinar qué detecciones están dentro de la zona monitorizada
     if len(detections) > 0:
         is_inside = zone.trigger(detections=detections)
     else:
@@ -47,12 +66,16 @@ def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_anno
     personas_boxes = []
     equipos_boxes = []
 
+    # Recorrer detecciones filtrando solo las que caen en la zona
     for is_in, class_id, xyxy in zip(is_inside, detections.class_id, detections.xyxy):
-        if not is_in: continue
-        nombre_clase = model.names[class_id].lower()
+        if not is_in:
+            continue  # ignorar fuera de zona
+        nombre_clase = model.names[class_id].lower()  # nombre de la clase detectada
         if nombre_clase == "person":
+            # Guardar caja de persona para calcular riesgo luego
             personas_boxes.append({"box": xyxy, "riesgo": 0})
         else:
+            # Guardar otras clases (presumiblemente EPP u objetos)
             equipos_boxes.append((nombre_clase, xyxy))
 
     infracciones_actuales = 0
@@ -62,23 +85,33 @@ def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_anno
         epp_encontrado = {"helmet": False, "vest": False, "goggle": False, "gloves": False, "boots": False}
         faltas_explicitas = {"no_helmet": False, "no_goggle": False, "no_gloves": False, "no_boots": False, "none": False}
 
+        # Comprobar superposición entre la persona y cada equipo detectado
         for equipo_nombre, e_box in equipos_boxes:
             if hay_interseccion(p_info["box"], e_box):
+                # Si el nombre de equipo coincide con una clave de EPP, marcar encontrado
                 if equipo_nombre in epp_encontrado:
                     epp_encontrado[equipo_nombre] = True
+                # Si la clase indica explícitamente ausencia ('no_helmet', etc.), marcar falta
                 elif equipo_nombre in faltas_explicitas:
                     faltas_explicitas[equipo_nombre] = True
 
         riesgo_persona = 0
 
+        # Calcular riesgo acumulando pesos de cada falta detectada
         if faltas_explicitas["none"]:
-            riesgo_persona = 100
+            riesgo_persona = 100  # caso extremo: clase 'none' declara riesgo total
         else:
-            if faltas_explicitas["no_helmet"] or not epp_encontrado["helmet"]: riesgo_persona += PESOS_RIESGO["casco"]
-            if not epp_encontrado["vest"]: riesgo_persona += PESOS_RIESGO["chaleco"]
-            if faltas_explicitas["no_goggle"] or not epp_encontrado["goggle"]: riesgo_persona += PESOS_RIESGO["lentes"]
-            if faltas_explicitas["no_gloves"] or not epp_encontrado["gloves"]: riesgo_persona += PESOS_RIESGO["guantes"]
-            if faltas_explicitas["no_boots"] or not epp_encontrado["boots"]: riesgo_persona += PESOS_RIESGO["botas"]
+            # Sumar pesos según EPP faltante o flags explícitos
+            if faltas_explicitas["no_helmet"] or not epp_encontrado["helmet"]:
+                riesgo_persona += PESOS_RIESGO["casco"]
+            if not epp_encontrado["vest"]:
+                riesgo_persona += PESOS_RIESGO["chaleco"]
+            if faltas_explicitas["no_goggle"] or not epp_encontrado["goggle"]:
+                riesgo_persona += PESOS_RIESGO["lentes"]
+            if faltas_explicitas["no_gloves"] or not epp_encontrado["gloves"]:
+                riesgo_persona += PESOS_RIESGO["guantes"]
+            if faltas_explicitas["no_boots"] or not epp_encontrado["boots"]:
+                riesgo_persona += PESOS_RIESGO["botas"]
 
         riesgo_persona = min(riesgo_persona, 100)
         p_info["riesgo"] = riesgo_persona

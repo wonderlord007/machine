@@ -1,5 +1,12 @@
+ # Archivo: requisitos.txt
+ # Funcionalidad: Lista de dependencias Python necesarias para ejecutar Sentinela360.
+ # Por qué existe: Facilitar la creación de un entorno reproducible con `pip install -r requisitos.txt`.
+ # Para qué sirve: Instalar paquetes como OpenCV, ultralytics, supervision, Pillow, etc.
+ # Cómo funciona: Ejecutar `pip install -r requisitos.txt` en un entorno virtual.
 ultralytics
 supervision
 opencv-python
+numpy
+customtkinter
+Pillow
 roboflow
-inference

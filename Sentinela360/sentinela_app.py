@@ -1,3 +1,11 @@
+"""Sentinela360 - sentinela_app.py
+
+Funcionalidad: Interfaz gráfica / adaptador para ejecutar la aplicación con GUI (CustomTkinter + OpenCV).
+Por qué existe: Ofrecer una experiencia de usuario más amigable para calibración, ejecución y visualización en pantalla.
+Para qué sirve: Incluir calibrador, motor de inferencia y utilidades para mostrar resultados y guardar evidencia.
+Cómo funciona: Inicializa dependencias (Supervision, YOLO, CustomTkinter), permite calibración, carga zonas escaladas a la resolución y procesa frames anotándolos.
+"""
+
 import os
 import time
 import cv2
@@ -97,13 +105,19 @@ def cargar_zona(id_camara, width, height):
             with open(archivo, "r") as f:
                 puntos = np.array(json.load(f))
                 # Escala automática de 1280x720 a la resolución de la pantalla
+                # Línea por línea:
+                # escala_x = factor para convertir coordenadas X desde 1280 a 'width'
+                # escala_y = factor para convertir coordenadas Y desde 720 a 'height'
                 escala_x = width / 1280.0
                 escala_y = height / 720.0
-                puntos[:, 0] = (puntos[:, 0] * escala_x).astype(int)
-                puntos[:, 1] = (puntos[:, 1] * escala_y).astype(int)
+                # Aplicar escala a cada columna de coordenadas
+                puntos[:, 0] = (puntos[:, 0] * escala_x).astype(int)  # escalar X
+                puntos[:, 1] = (puntos[:, 1] * escala_y).astype(int)  # escalar Y
                 return puntos
     except Exception:
+        # Si falla la lectura/parseo, usar zona por defecto
         pass
+    # Fallback: cuadrilátero que deja margen de 5 píxeles
     return np.array([[5, 5], [width - 5, 5], [width - 5, height - 5], [5, height - 5]])
 
 def hay_interseccion(box_persona, box_equipo):
@@ -114,9 +128,12 @@ def hay_interseccion(box_persona, box_equipo):
     return max(0, xB - xA) * max(0, yB - yA) > 0
 
 def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_annotator, nombre_camara, estado):
+    # Ejecutar inferencia sobre el frame con el modelo YOLO
     results = model(frame, device=0, conf=0.45, verbose=False)[0]
+    # Convertir salida a la estructura de datos que usa 'supervision'
     detections = sv.Detections.from_ultralytics(results)
     
+    # Determinar qué detecciones cayeron dentro de la zona definida
     if len(detections) > 0:
         is_inside = zone.trigger(detections=detections)
     else:
@@ -331,8 +348,8 @@ class SentinelaApp(ctk.CTk):
             if self.cap0 and self.cap0.isOpened():
                 ret1, frame1 = self.cap0.read()
                 if ret1:
-                    # EFECTO ESPEJO APLICADO AQUÍ A LA CÁMARA 0
-                    frame1 = cv2.flip(frame1, 1)
+                    # EFECTO ESPEJO APLICADO A LA CÁMARA 0: mejora la experiencia de calibración
+                    frame1 = cv2.flip(frame1, 1)  # voltear horizontalmente
                     
                     frame1 = cv2.resize(frame1, (self.res_w, self.res_h))
                     frame1 = procesar_frame(frame1, self.model, self.estado_cam0["zona"], self.box_annotator, self.label_annotator, self.annotator_cam0, "CAM 0", self.estado_cam0)

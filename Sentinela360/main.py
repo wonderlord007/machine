@@ -1,3 +1,11 @@
+"""Sentinela360 - main.py
+
+Funcionalidad: Punto de entrada de la aplicación de detección y alertas.
+Por qué existe: Orquestar la carga del modelo, la lectura de zonas, la captura de cámara y la lógica de detección/alerta.
+Para qué sirve: Ejecutar inferencia sobre frames de cámara, anotar resultados y guardar evidencias en 'Alertas/'.
+Cómo funciona: Carga 'best.pt', lee archivos JSON de zona, procesa cada frame con YOLO y la lógica geométrica, calcula riesgo y persiste alertas en disco.
+"""
+
 import os
 import time
 import cv2
@@ -5,6 +13,7 @@ import numpy as np
 import json
 import supervision as sv
 from ultralytics import YOLO
+# Importante: no modificar el orden de imports salvo que sepas las dependencias.
 
 # REGLAS DE NEGOCIO DEL MODELO ESTABLE
 PESOS_RIESGO = {
@@ -16,26 +25,50 @@ PESOS_RIESGO = {
 }
 
 def cargar_zona(id_camara, width, height):
-    """Carga el polígono buscando el nombre oficial de la calibración."""
-    archivo = f"zona_cam_{id_camara}.json"
+    """Carga el polígono buscando el nombre oficial de la calibración.
+
+    Bloque: lectura de archivos de zona (prioriza zona_cam_<id>.json)
+    - Si existe `zona_cam_<id>.json` lo carga y lo devuelve como numpy array.
+    - Si no existe, intenta `zona_config.json` (formato alternativo).
+    - Si falla, devuelve un polígono por defecto que encuadra casi todo el frame.
+
+    Comentarios por línea importantes:
+    "archivo": nombre del archivo esperado para la cámara (ej: zona_cam_0.json)
+    "os.path.exists(archivo)": comprueba existencia antes de abrir
+    "json.load(f)": parsea JSON con lista de puntos [[x,y],...]
+    "np.array(...)": convierte la lista a array para operaciones geométricas
+    "return default polygon": fallback seguro cuando no hay config
+    """
+    archivo = f"zona_cam_{id_camara}.json"  # nombre esperado para la calibración de la cámara
     try:
+        # Si existe el archivo específico de la cámara, usarlo
         if os.path.exists(archivo):
             with open(archivo, "r") as f:
-                return np.array(json.load(f))
+                return np.array(json.load(f))  # devuelve np.array([[x,y],...])
+        # Si no, intentar archivo genérico de configuración
         elif os.path.exists("zona_config.json"):
             with open("zona_config.json", "r") as f:
                 return np.array(json.load(f))
     except Exception:
+        # Silencioso en caso de error de parseo; se usa el fallback
         pass
+    # Fallback: polígono que cubre casi todo el frame, con margen de 5px
     return np.array([[5, 5], [width - 5, 5], [width - 5, height - 5], [5, height - 5]])
 
 def hay_interseccion(box_persona, box_equipo):
-    """Geometría robusta de superposición para no depender del centro exacto."""
-    xA = max(box_persona[0], box_equipo[0])
-    yA = max(box_persona[1], box_equipo[1])
-    xB = min(box_persona[2], box_equipo[2])
-    yB = min(box_persona[3], box_equipo[3])
-    return max(0, xB - xA) * max(0, yB - yA) > 0
+    """Comprueba si dos cajas (xyxy) se superponen.
+
+    Por línea:
+    - xA,yA: coordenadas superior-izquierda del área de intersección
+    - xB,yB: coordenadas inferior-derecha del área de intersección
+    - El área se calcula como (xB-xA)*(yB-yA)
+    - Si el área es mayor que 0, existe intersección
+    """
+    xA = max(box_persona[0], box_equipo[0])  # x izquierda del solapamiento
+    yA = max(box_persona[1], box_equipo[1])  # y superior del solapamiento
+    xB = min(box_persona[2], box_equipo[2])  # x derecha del solapamiento
+    yB = min(box_persona[3], box_equipo[3])  # y inferior del solapamiento
+    return max(0, xB - xA) * max(0, yB - yA) > 0  # True si hay área positiva
 
 def main():
     print("[SENTINELA 360] -> Inicializando IA con Modelo Estable...")
