@@ -140,7 +140,7 @@ def main():
 
         infracciones_actuales = 0
 
-        # Lógica de cálculo original (Inglés) + Superposición
+        # Lógica de cálculo original  Superposición
         for p_info in personas_boxes:
             px1, py1, px2, py2 = p_info["box"]
             
@@ -216,7 +216,7 @@ def main():
             with open(archivo_log, "a") as log:
                 log.write(f"{fecha_actual},{hora_actual},Infraccion Detectada,{ruta_archivo}\n")
                 
-            print(f"⚠️ Evidencia asegurada y registrada: {stamp}")
+            print(f" Evidencia asegurada y registrada: {stamp}")
             alert_cooldown = True  
 
         if consecutive_infractions == 0:
