@@ -1,11 +1,3 @@
-"""Sentinela360 - sentinela_app.py
-
-Funcionalidad: Interfaz gráfica / adaptador para ejecutar la aplicación con GUI (CustomTkinter + OpenCV).
-Por qué existe: Ofrecer una experiencia de usuario más amigable para calibración, ejecución y visualización en pantalla.
-Para qué sirve: Incluir calibrador, motor de inferencia y utilidades para mostrar resultados y guardar evidencia.
-Cómo funciona: Inicializa dependencias (Supervision, YOLO, CustomTkinter), permite calibración, carga zonas escaladas a la resolución y procesa frames anotándolos.
-"""
-
 import os
 import time
 import cv2
@@ -19,12 +11,10 @@ try:
     import customtkinter as ctk
     from PIL import Image, ImageTk
 except ImportError as e:
-    print(f"❌ ERROR: {e}. Instala: pip install customtkinter Pillow")
+    print(f" ERROR: {e}. Instala: pip install customtkinter Pillow")
     exit()
 
-# ==========================================
 # 1. CONFIGURACIONES GLOBALES
-# ==========================================
 PESOS_RIESGO = {
     "casco": 35,
     "chaleco": 35,
@@ -34,9 +24,7 @@ PESOS_RIESGO = {
 }
 FRAMES_REQUERIDOS = 60
 
-# ==========================================
 # 2. HERRAMIENTA DE CALIBRACIÓN INCORPORADA
-# ==========================================
 def lanzar_calibrador(id_camara):
     """Abre la herramienta geométrica para que el usuario defina la zona con 4 clics."""
     puntos = []
@@ -45,15 +33,15 @@ def lanzar_calibrador(id_camara):
     def capturar_clic(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN and len(puntos) < 4:
             puntos.append([x, y])
-            print(f"📍 Punto {len(puntos)}/4 en Cam {id_camara}: [{x}, {y}]")
+            print(f" Punto {len(puntos)}/4 en Cam {id_camara}: [{x}, {y}]")
             if len(puntos) == 4:
                 with open(archivo_salida, "w") as f:
                     json.dump(puntos, f)
-                print(f"✅ ¡Zona guardada en {archivo_salida}!")
+                print(f" ¡Zona guardada en {archivo_salida}!")
 
     cap = cv2.VideoCapture(id_camara)
     if not cap.isOpened():
-        print(f"❌ Error: No se detecta la cámara {id_camara}.")
+        print(f" Error: No se detecta la cámara {id_camara}.")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -76,7 +64,6 @@ def lanzar_calibrador(id_camara):
 
         frame = cv2.resize(frame, (1280, 720))
         
-        # Dibujar los puntos y líneas
         for pt in puntos:
             cv2.circle(frame, tuple(pt), 5, (0, 0, 255), -1)
         if len(puntos) > 1:
@@ -95,29 +82,20 @@ def lanzar_calibrador(id_camara):
     cap.release()
     cv2.destroyAllWindows()
 
-# ==========================================
 # 3. MOTOR LÓGICO (IA y Geometría)
-# ==========================================
 def cargar_zona(id_camara, width, height):
     archivo = f"zona_cam_{id_camara}.json"
     try:
         if os.path.exists(archivo):
             with open(archivo, "r") as f:
                 puntos = np.array(json.load(f))
-                # Escala automática de 1280x720 a la resolución de la pantalla
-                # Línea por línea:
-                # escala_x = factor para convertir coordenadas X desde 1280 a 'width'
-                # escala_y = factor para convertir coordenadas Y desde 720 a 'height'
                 escala_x = width / 1280.0
                 escala_y = height / 720.0
-                # Aplicar escala a cada columna de coordenadas
-                puntos[:, 0] = (puntos[:, 0] * escala_x).astype(int)  # escalar X
-                puntos[:, 1] = (puntos[:, 1] * escala_y).astype(int)  # escalar Y
+                puntos[:, 0] = (puntos[:, 0] * escala_x).astype(int)
+                puntos[:, 1] = (puntos[:, 1] * escala_y).astype(int)
                 return puntos
     except Exception:
-        # Si falla la lectura/parseo, usar zona por defecto
         pass
-    # Fallback: cuadrilátero que deja margen de 5 píxeles
     return np.array([[5, 5], [width - 5, 5], [width - 5, height - 5], [5, height - 5]])
 
 def hay_interseccion(box_persona, box_equipo):
@@ -128,12 +106,9 @@ def hay_interseccion(box_persona, box_equipo):
     return max(0, xB - xA) * max(0, yB - yA) > 0
 
 def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_annotator, nombre_camara, estado):
-    # Ejecutar inferencia sobre el frame con el modelo YOLO
     results = model(frame, device=0, conf=0.45, verbose=False)[0]
-    # Convertir salida a la estructura de datos que usa 'supervision'
     detections = sv.Detections.from_ultralytics(results)
     
-    # Determinar qué detecciones cayeron dentro de la zona definida
     if len(detections) > 0:
         is_inside = zone.trigger(detections=detections)
     else:
@@ -215,68 +190,85 @@ def procesar_frame(frame, model, zone, box_annotator, label_annotator, zone_anno
 
     return frame
 
-# ==========================================
 # 4. INTERFAZ GRÁFICA UNIFICADA
-# ==========================================
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 class SentinelaApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Sentinela 360 - Launcher")
-        self.geometry("600x450")
         self.protocol("WM_DELETE_WINDOW", self.cerrar_aplicacion)
         
         self.cap0 = None
         self.cap1 = None
         self.model = None
+        self.is_running = False 
+        self.after_id = None    
+        self.ancho_previo = 0 # Inicializar el detector de tamaño de ventana
 
         if not os.path.exists("Alertas"): 
             os.makedirs("Alertas")
 
         self.mostrar_menu_inicio()
 
+    def limpiar_ventana(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
     def mostrar_menu_inicio(self):
-        self.frame_menu = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_menu.pack(expand=True, fill="both")
-
-        ctk.CTkLabel(self.frame_menu, text="SENTINELA 360", font=("Roboto", 28, "bold"), text_color="#3498db").pack(pady=(40, 5))
-        ctk.CTkLabel(self.frame_menu, text="Seleccione el modo de operación", font=("Roboto", 14)).pack(pady=(0, 20))
-
-        # Botones de Inicio
-        btn_individual = ctk.CTkButton(self.frame_menu, text="▶ Iniciar Modo Individual (1 Cámara)", height=40, command=lambda: self.iniciar_sistema(modo="individual"))
-        btn_individual.pack(pady=10, padx=50, fill="x")
-
-        btn_dual = ctk.CTkButton(self.frame_menu, text="▶ Iniciar Modo Dual (2 Cámaras)", height=40, fg_color="#2ecc71", hover_color="#27ae60", command=lambda: self.iniciar_sistema(modo="dual"))
-        btn_dual.pack(pady=10, padx=50, fill="x")
-
-        # Separador
-        ctk.CTkLabel(self.frame_menu, text="Herramientas Administrativas", font=("Roboto", 12)).pack(pady=(20, 5))
-
-        # Botones de Calibración
-        frame_calibrar = ctk.CTkFrame(self.frame_menu, fg_color="transparent")
-        frame_calibrar.pack(pady=5)
+        self.limpiar_ventana()
+        self.is_running = False
         
-        btn_cal0 = ctk.CTkButton(frame_calibrar, text="⚙️ Calibrar Zona Cam 0", width=160, fg_color="#f39c12", hover_color="#d68910", command=lambda: lanzar_calibrador(0))
+        self.state('normal')
+        self.title("Sentinela 360 - Menú Principal")
+        self.geometry("750x550")
+        
+        self.marco_central = ctk.CTkFrame(self, corner_radius=20, fg_color="#1e1e24")
+        self.marco_central.pack(expand=True, fill="both", padx=40, pady=40)
+
+        ctk.CTkLabel(self.marco_central, text=" SENTINELA 360", font=("Roboto", 34, "bold"), text_color="#3498db").pack(pady=(30, 5))
+        ctk.CTkLabel(self.marco_central, text="Sistema de Inteligencia Artificial para Seguridad Industrial", font=("Roboto", 14), text_color="gray").pack(pady=(0, 30))
+
+        marco_botones = ctk.CTkFrame(self.marco_central, fg_color="transparent")
+        marco_botones.pack(pady=10)
+
+        btn_individual = ctk.CTkButton(marco_botones, text="▶ Monitoreo Individual (1 Cámara)", font=("Roboto", 15, "bold"), height=50, width=300, corner_radius=10, command=lambda: self.iniciar_sistema(modo="individual"))
+        btn_individual.pack(pady=10)
+
+        btn_dual = ctk.CTkButton(marco_botones, text="▶ Monitoreo Dual (2 Cámaras)", font=("Roboto", 15, "bold"), height=50, width=300, corner_radius=10, fg_color="#27ae60", hover_color="#219150", command=lambda: self.iniciar_sistema(modo="dual"))
+        btn_dual.pack(pady=10)
+
+        ctk.CTkLabel(self.marco_central, text="--- Herramientas Topográficas ---", font=("Roboto", 12), text_color="gray").pack(pady=(20, 10))
+
+        frame_calibrar = ctk.CTkFrame(self.marco_central, fg_color="transparent")
+        frame_calibrar.pack()
+        
+        btn_cal0 = ctk.CTkButton(frame_calibrar, text=" Calibrar Cam 0", width=140, height=35, corner_radius=8, fg_color="#f39c12", hover_color="#d68910", command=lambda: lanzar_calibrador(0))
         btn_cal0.pack(side="left", padx=10)
 
-        btn_cal1 = ctk.CTkButton(frame_calibrar, text="⚙️ Calibrar Zona Cam 1", width=160, fg_color="#f39c12", hover_color="#d68910", command=lambda: lanzar_calibrador(1))
+        btn_cal1 = ctk.CTkButton(frame_calibrar, text=" Calibrar Cam 1", width=140, height=35, corner_radius=8, fg_color="#f39c12", hover_color="#d68910", command=lambda: lanzar_calibrador(1))
         btn_cal1.pack(side="right", padx=10)
 
     def iniciar_sistema(self, modo):
         self.modo_actual = modo
-        self.frame_menu.destroy()
+        self.limpiar_ventana()
 
-        self.lbl_carga = ctk.CTkLabel(self, text="Cargando Inteligencia Artificial...\nPor favor espere.", font=("Roboto", 16))
-        self.lbl_carga.pack(expand=True)
+        lbl_carga = ctk.CTkLabel(self, text=" Inicializando Motor Neuronal y Cámaras...\nPor favor espere.", font=("Roboto", 18, "bold"), text_color="#f1c40f")
+        lbl_carga.pack(expand=True)
         self.update()
 
         try:
-            self.model = YOLO("best.pt")
+            if self.model is None:
+                self.model = YOLO("best.pt")
+                
             self.cap0 = cv2.VideoCapture(0)
+            self.cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
             if self.modo_actual == "dual":
                 self.cap1 = cv2.VideoCapture(1)
+                self.cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
             if not self.cap0.isOpened():
                 raise Exception("Cámara principal (0) desconectada.")
@@ -284,21 +276,46 @@ class SentinelaApp(ctk.CTk):
                 raise Exception("Cámara secundaria (1) desconectada.")
 
         except Exception as e:
-            self.lbl_carga.configure(text=f"❌ ERROR: {e}\nReinicie el programa.", text_color="red")
+            lbl_carga.configure(text=f" ERROR: {e}\nRegresando al menú...", text_color="red")
+            self.update()
+            time.sleep(3)
+            self.volver_al_menu()
             return
 
-        self.lbl_carga.destroy()
+        self.is_running = True
         self.construir_dashboard()
 
+    def volver_al_menu(self):
+        print("[SISTEMA] -> Regresando al menú principal...")
+        self.is_running = False 
+        
+        if self.after_id:
+            self.after_cancel(self.after_id)
+            self.after_id = None
+            
+        if self.cap0: self.cap0.release()
+        if self.cap1: self.cap1.release()
+        
+        self.mostrar_menu_inicio()
+
     def construir_dashboard(self):
+        self.limpiar_ventana()
+        self.ancho_previo = 0 # Resetea el tracker de ventana
+        
         if self.modo_actual == "individual":
-            self.title("Sentinela 360 - Modo Individual")
-            self.geometry("1050x750")
+            self.title("Sentinela 360 - Comando Individual")
+            self.geometry("1100x750")
             self.res_w, self.res_h = 960, 540 
         else:
-            self.title("Sentinela 360 - Centro de Comando DUAL")
-            self.geometry("1350x700")  # Aumentamos un poco el alto para que encaje bien
-            self.res_w, self.res_h = 640, 480 # CÁMARAS EN 4:3 (Ya no aplasta)
+            self.title("Sentinela 360 - Comando DUAL")
+            self.geometry("1350x700")
+            self.res_w, self.res_h = 640, 360 
+
+        # Intentar arrancar maximizado por comodidad
+        try:
+            self.state('zoomed')
+        except:
+            pass
 
         self.box_annotator = sv.BoxAnnotator()
         self.label_annotator = sv.LabelAnnotator()
@@ -312,29 +329,30 @@ class SentinelaApp(ctk.CTk):
             self.annotator_cam1 = sv.PolygonZoneAnnotator(zone=zona1, color=sv.Color.RED, thickness=2)
             self.estado_cam1 = {"consecutivas": 0, "cooldown": False, "zona": zona1}
 
-        self.lbl_titulo = ctk.CTkLabel(self, text=f"MONITOREO INDUSTRIAL - {'SECTOR PRINCIPAL' if self.modo_actual=='individual' else 'SISTEMA DUAL'}", font=("Roboto", 24, "bold"))
-        self.lbl_titulo.pack(pady=10)
+        marco_header = ctk.CTkFrame(self, fg_color="#1e1e24", corner_radius=10)
+        marco_header.pack(fill="x", padx=20, pady=(15, 5))
+        
+        titulo_texto = "SECTOR PRINCIPAL (CAM 0)" if self.modo_actual == "individual" else "SISTEMA MULTICÁMARA (DUAL)"
+        ctk.CTkLabel(marco_header, text=f" MONITOREO ACTIVO: {titulo_texto}", font=("Roboto", 20, "bold")).pack(pady=10)
 
+        # Contenedor vital para el Responsive
         self.marco_camaras = ctk.CTkFrame(self, fg_color="transparent")
-        self.marco_camaras.pack(fill="both", expand=True, padx=20)
+        self.marco_camaras.pack(fill="both", expand=True, padx=20, pady=5)
 
         if self.modo_actual == "individual":
-            self.lbl_cam0 = ctk.CTkLabel(self.marco_camaras, text="Cargando...")
-            self.lbl_cam0.pack()
+            self.lbl_cam0 = ctk.CTkLabel(self.marco_camaras, text="")
+            self.lbl_cam0.pack(expand=True)
         else:
-            self.lbl_cam0 = ctk.CTkLabel(self.marco_camaras, text="Cargando...")
-            self.lbl_cam0.pack(side="left", padx=10)
-            self.lbl_cam1 = ctk.CTkLabel(self.marco_camaras, text="Cargando...")
-            self.lbl_cam1.pack(side="right", padx=10)
+            self.lbl_cam0 = ctk.CTkLabel(self.marco_camaras, text="")
+            self.lbl_cam0.pack(side="left", expand=True)
+            self.lbl_cam1 = ctk.CTkLabel(self.marco_camaras, text="")
+            self.lbl_cam1.pack(side="right", expand=True)
 
-        self.marco_controles = ctk.CTkFrame(self, height=60, corner_radius=10)
-        self.marco_controles.pack(fill="x", padx=20, pady=15)
+        marco_controles = ctk.CTkFrame(self, height=60, corner_radius=10, fg_color="#1e1e24")
+        marco_controles.pack(fill="x", padx=20, pady=(5, 15))
 
-        self.lbl_estado = ctk.CTkLabel(self.marco_controles, text="🟢 SISTEMA OPERATIVO EN TIEMPO REAL", font=("Roboto", 14, "bold"), text_color="#00FF00")
-        self.lbl_estado.pack(side="left", padx=20, pady=15)
-
-        self.btn_salir = ctk.CTkButton(self.marco_controles, text="Finalizar Turno", fg_color="#D93838", hover_color="#B32B2B", command=self.cerrar_aplicacion)
-        self.btn_salir.pack(side="right", padx=20, pady=15)
+        ctk.CTkLabel(marco_controles, text=" PROCESANDO IA EN TIEMPO REAL", font=("Roboto", 14, "bold"), text_color="#2ecc71").pack(side="left", padx=20, pady=15)
+        ctk.CTkButton(marco_controles, text=" Volver al Menú", font=("Roboto", 14, "bold"), fg_color="#e74c3c", hover_color="#c0392b", corner_radius=8, command=self.volver_al_menu).pack(side="right", padx=20, pady=15)
 
         self.actualizar_video()
 
@@ -344,17 +362,40 @@ class SentinelaApp(ctk.CTk):
         return ImageTk.PhotoImage(image=pil_img)
 
     def actualizar_video(self):
+        if not self.is_running:
+            return
+
         try:
+            ancho_actual = self.marco_camaras.winfo_width()
+            
+            if ancho_actual > 100 and abs(self.ancho_previo - ancho_actual) > 10:
+                self.ancho_previo = ancho_actual
+                
+                if self.modo_actual == "individual":
+                    self.res_w = int(ancho_actual * 0.95) 
+                    self.res_h = int(self.res_w * 9 / 16) 
+                else:
+                    self.res_w = int(ancho_actual * 0.48)
+                    self.res_h = int(self.res_w * 9 / 16)
+          
+                zona0 = sv.PolygonZone(polygon=cargar_zona(0, self.res_w, self.res_h), triggering_anchors=[sv.Position.CENTER])
+                self.annotator_cam0 = sv.PolygonZoneAnnotator(zone=zona0, color=sv.Color.BLUE, thickness=2)
+                self.estado_cam0["zona"] = zona0
+
+                if self.modo_actual == "dual":
+                    zona1 = sv.PolygonZone(polygon=cargar_zona(1, self.res_w, self.res_h), triggering_anchors=[sv.Position.CENTER])
+                    self.annotator_cam1 = sv.PolygonZoneAnnotator(zone=zona1, color=sv.Color.RED, thickness=2)
+                    self.estado_cam1["zona"] = zona1
+
+
             if self.cap0 and self.cap0.isOpened():
                 ret1, frame1 = self.cap0.read()
                 if ret1:
-                    # EFECTO ESPEJO APLICADO A LA CÁMARA 0: mejora la experiencia de calibración
-                    frame1 = cv2.flip(frame1, 1)  # voltear horizontalmente
-                    
+                    frame1 = cv2.flip(frame1, 1)
                     frame1 = cv2.resize(frame1, (self.res_w, self.res_h))
                     frame1 = procesar_frame(frame1, self.model, self.estado_cam0["zona"], self.box_annotator, self.label_annotator, self.annotator_cam0, "CAM 0", self.estado_cam0)
                     img1 = self.cv2_a_tkinter(frame1)
-                    self.lbl_cam0.configure(image=img1, text="")
+                    self.lbl_cam0.configure(image=img1)
                     self.lbl_cam0.image = img1 
 
             if self.modo_actual == "dual" and self.cap1 and self.cap1.isOpened():
@@ -363,16 +404,17 @@ class SentinelaApp(ctk.CTk):
                     frame2 = cv2.resize(frame2, (self.res_w, self.res_h))
                     frame2 = procesar_frame(frame2, self.model, self.estado_cam1["zona"], self.box_annotator, self.label_annotator, self.annotator_cam1, "CAM 1", self.estado_cam1)
                     img2 = self.cv2_a_tkinter(frame2)
-                    self.lbl_cam1.configure(image=img2, text="")
+                    self.lbl_cam1.configure(image=img2)
                     self.lbl_cam1.image = img2
 
-            self.after(15, self.actualizar_video)
+            self.after_id = self.after(15, self.actualizar_video)
         except Exception as e:
-            print(f"❌ Error en video: {e}")
+            print(f" Error en video: {e}")
             traceback.print_exc()
 
     def cerrar_aplicacion(self):
-        print("[SENTINELA 360] -> Apagando sistema...")
+        print("[SENTINELA 360] -> Apagando sistema completamente...")
+        self.is_running = False
         if self.cap0: self.cap0.release()
         if self.cap1: self.cap1.release()
         self.destroy()

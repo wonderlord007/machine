@@ -1,11 +1,3 @@
-"""Sentinela360 - main.py
-
-Funcionalidad: Punto de entrada de la aplicación de detección y alertas.
-Por qué existe: Orquestar la carga del modelo, la lectura de zonas, la captura de cámara y la lógica de detección/alerta.
-Para qué sirve: Ejecutar inferencia sobre frames de cámara, anotar resultados y guardar evidencias en 'Alertas/'.
-Cómo funciona: Carga 'best.pt', lee archivos JSON de zona, procesa cada frame con YOLO y la lógica geométrica, calcula riesgo y persiste alertas en disco.
-"""
-
 import os
 import time
 import cv2
@@ -13,9 +5,7 @@ import numpy as np
 import json
 import supervision as sv
 from ultralytics import YOLO
-# Importante: no modificar el orden de imports salvo que sepas las dependencias.
 
-# REGLAS DE NEGOCIO DEL MODELO ESTABLE
 PESOS_RIESGO = {
     "casco": 35,
     "chaleco": 35,
@@ -25,50 +15,29 @@ PESOS_RIESGO = {
 }
 
 def cargar_zona(id_camara, width, height):
-    """Carga el polígono buscando el nombre oficial de la calibración.
+    """Cargar la zona de interés para la cámara.
 
-    Bloque: lectura de archivos de zona (prioriza zona_cam_<id>.json)
-    - Si existe `zona_cam_<id>.json` lo carga y lo devuelve como numpy array.
-    - Si no existe, intenta `zona_config.json` (formato alternativo).
-    - Si falla, devuelve un polígono por defecto que encuadra casi todo el frame.
-
-    Comentarios por línea importantes:
-    "archivo": nombre del archivo esperado para la cámara (ej: zona_cam_0.json)
-    "os.path.exists(archivo)": comprueba existencia antes de abrir
-    "json.load(f)": parsea JSON con lista de puntos [[x,y],...]
-    "np.array(...)": convierte la lista a array para operaciones geométricas
-    "return default polygon": fallback seguro cuando no hay config
+    Intenta `zona_cam_<id>.json` primero, luego `zona_config.json` y usa un polígono de fallback si no hay configuración válida.
     """
-    archivo = f"zona_cam_{id_camara}.json"  # nombre esperado para la calibración de la cámara
+    archivo = f"zona_cam_{id_camara}.json"
     try:
-        # Si existe el archivo específico de la cámara, usarlo
         if os.path.exists(archivo):
             with open(archivo, "r") as f:
-                return np.array(json.load(f))  # devuelve np.array([[x,y],...])
-        # Si no, intentar archivo genérico de configuración
+                return np.array(json.load(f))
         elif os.path.exists("zona_config.json"):
             with open("zona_config.json", "r") as f:
                 return np.array(json.load(f))
     except Exception:
-        # Silencioso en caso de error de parseo; se usa el fallback
         pass
-    # Fallback: polígono que cubre casi todo el frame, con margen de 5px
     return np.array([[5, 5], [width - 5, 5], [width - 5, height - 5], [5, height - 5]])
 
 def hay_interseccion(box_persona, box_equipo):
-    """Comprueba si dos cajas (xyxy) se superponen.
-
-    Por línea:
-    - xA,yA: coordenadas superior-izquierda del área de intersección
-    - xB,yB: coordenadas inferior-derecha del área de intersección
-    - El área se calcula como (xB-xA)*(yB-yA)
-    - Si el área es mayor que 0, existe intersección
-    """
-    xA = max(box_persona[0], box_equipo[0])  # x izquierda del solapamiento
-    yA = max(box_persona[1], box_equipo[1])  # y superior del solapamiento
-    xB = min(box_persona[2], box_equipo[2])  # x derecha del solapamiento
-    yB = min(box_persona[3], box_equipo[3])  # y inferior del solapamiento
-    return max(0, xB - xA) * max(0, yB - yA) > 0  # True si hay área positiva
+    """Comprueba si dos cajas en formato xyxy se solapan."""
+    xA = max(box_persona[0], box_equipo[0])
+    yA = max(box_persona[1], box_equipo[1])
+    xB = min(box_persona[2], box_equipo[2])
+    yB = min(box_persona[3], box_equipo[3])
+    return max(0, xB - xA) * max(0, yB - yA) > 0
 
 def main():
     print("[SENTINELA 360] -> Inicializando IA con Modelo Estable...")
@@ -87,9 +56,8 @@ def main():
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     polygon = cargar_zona(video_path, width, height)
-    # PARCHE: triggering_anchors al centro para que detecte el cuerpo cortado por la cámara
     zone = sv.PolygonZone(polygon=polygon, triggering_anchors=[sv.Position.CENTER])
-    
+
     box_annotator = sv.BoxAnnotator()
     label_annotator = sv.LabelAnnotator()
     zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=sv.Color.RED, thickness=2, text_thickness=2)
@@ -129,18 +97,19 @@ def main():
         equipos_boxes = []
 
         for is_in, class_id, xyxy in zip(is_inside, detections.class_id, detections.xyxy):
-            if not is_in: continue
-            
+            if not is_in:
+                continue
+
             nombre_clase = model.names[class_id].lower()
             if nombre_clase == "person":
-                # Almacenamos diccionario para inyectar el riesgo luego
+                # Guardar datos de persona para calcular riesgo
                 personas_boxes.append({"box": xyxy, "riesgo": 0})
             else:
                 equipos_boxes.append((nombre_clase, xyxy))
 
         infracciones_actuales = 0
 
-        # Lógica de cálculo original  Superposición
+        # Calcular riesgo por persona dentro de la zona
         for p_info in personas_boxes:
             px1, py1, px2, py2 = p_info["box"]
             
@@ -181,7 +150,7 @@ def main():
         frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
         frame = zone_annotator.annotate(scene=frame)
 
-        # Semáforo dinámico inyectado
+        # Colorear cajas según nivel de riesgo
         for p_info in personas_boxes:
             px1, py1, px2, py2 = map(int, p_info["box"])
             riesgo = p_info["riesgo"]
